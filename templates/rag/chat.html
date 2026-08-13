@@ -1,0 +1,323 @@
+{% extends "base.html" %}
+
+{% block title %}Chat{% endblock %}
+
+{% block extra_css %}
+<style>
+    .chat-container{
+        max-width:900px;
+        margin:auto;
+    }
+
+    .chat-window{
+        height:70vh;
+        overflow-y:auto;
+        padding:20px 0 100px;
+    }
+
+    .user-message{
+        display:flex;
+        justify-content:flex-end;
+        margin-bottom:18px;
+    }
+
+    .ai-message{
+        display:flex;
+        justify-content:flex-start;
+        margin-bottom:18px;
+    }
+
+    .message{
+        max-width:75%;
+        padding:15px 18px;
+        border-radius:16px;
+        word-break:break-word;
+    }
+
+    .user-message .message{
+        background:#0d6efd;
+        color:#fff;
+    }
+
+    .ai-message .message{
+        background:#222;
+        color:#fff;
+        border:1px solid #333;
+    }
+
+    .sources{
+        margin-top:15px;
+        padding-top:12px;
+        border-top:1px solid #444;
+    }
+
+    .chat-input{
+        position:fixed;
+        bottom:20px;
+        left:50%;
+        transform:translateX(-50%);
+        width:100%;
+        max-width:900px;
+        background:#1b1b1b;
+        border:1px solid #333;
+        border-radius:18px;
+        padding:12px;
+    }
+
+    .chat-input .form-control{
+        border:none;
+        background:transparent;
+    }
+
+    .chat-input .form-control:focus{
+        box-shadow:none;
+    }
+
+    #loadingSpinner{
+        display:none;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="chat-container">
+
+{% if not chat_started %}
+
+<div class="text-center mb-5">
+    <h2 class="fw-bold">Select Search Scope</h2>
+</div>
+
+<form method="POST">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="start_chat">
+
+    <div class="mb-4">
+        <select class="form-select" name="document">
+            <option value="all">All Documents</option>
+
+            {% for document in documents %}
+            <option value="{{ document.id }}">
+                {{ document.document_file.name|cut:"documents/" }}
+            </option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <button class="btn btn-primary w-100">
+        Start Chat
+    </button>
+</form>
+
+<div class="text-center mt-4">
+    <a href="{% url 'dashboard' %}" class="btn btn-outline-light">
+        Back to Dashboard
+    </a>
+</div>
+
+{% else %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+
+    <h5 class="mb-0">
+        {% if selected_document == "all" %}
+            All Documents
+        {% else %}
+            {% for document in documents %}
+                {% if document.id|stringformat:"s" == selected_document %}
+                    {{ document.document_file.name|cut:"documents/" }}
+                {% endif %}
+            {% endfor %}
+        {% endif %}
+    </h5>
+
+    <div>
+        <a href="{% url 'chat' %}?new=1" class="btn btn-outline-light btn-sm me-2">
+            <i class="bi bi-plus-lg"></i>
+            New Chat
+        </a>
+
+        <a href="{% url 'dashboard' %}" class="btn btn-outline-light btn-sm">
+            Dashboard
+        </a>
+    </div>
+
+</div>
+
+<div class="chat-window" id="chatWindow">
+
+    {% for msg in chat_messages %}
+
+    <div class="user-message">
+        <div class="message">
+            {{ msg.question }}
+        </div>
+    </div>
+
+    <div class="ai-message">
+        <div class="message">
+
+            <div class="raw-markdown d-none">{{ msg.answer }}</div>
+            <div class="markdown-content"></div>
+
+            {% if msg.sources %}
+            <div class="sources">
+                <strong>Sources</strong>
+
+                <ul class="mb-0 mt-2">
+                    {% for source in msg.sources %}
+                    <li>
+                        <li>
+                            {{ source.document_name }}
+                            {% if source.page_number %}
+                            (Page {{ source.page_number }})
+                            {% endif %}
+                            (Chunk {{ source.chunk_number }})
+                        </li>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
+        </div>
+    </div>
+
+    {% endfor %}
+
+    <div class="text-center" id="loadingSpinner">
+        <div class="spinner-border text-light"></div>
+    </div>
+
+</div>
+
+<form id="chatForm" class="chat-input">
+
+    {% csrf_token %}
+    <input type="hidden" name="action" value="ask">
+
+    <div class="input-group">
+
+        <input
+            type="text"
+            class="form-control"
+            id="question"
+            placeholder="Ask anything..."
+            autocomplete="off"
+            required
+        >
+
+        <button class="btn btn-primary" type="submit">
+            Send
+        </button>
+
+    </div>
+
+</form>
+
+{% endif %}
+
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+
+{% if chat_started %}
+
+<script>
+document.querySelectorAll(".raw-markdown").forEach(function(item){
+    const html=marked.parse(item.textContent);
+    const container=item.nextElementSibling;
+    container.innerHTML=html;
+});
+hljs.highlightAll();
+
+const form=document.getElementById("chatForm");
+const chatWindow=document.getElementById("chatWindow");
+const spinner=document.getElementById("loadingSpinner");
+
+chatWindow.scrollTop=chatWindow.scrollHeight;
+
+form.addEventListener("submit",async function(e){
+
+    e.preventDefault();
+
+    const input=document.getElementById("question");
+
+    if(!input.value.trim()) return;
+
+    const userQuestion = input.value;
+
+    chatWindow.insertAdjacentHTML("beforeend", `
+    <div class="user-message">
+        <div class="message">
+            ${userQuestion}
+        </div>
+    </div>
+
+    <div class="ai-message" id="loadingMessage">
+        <div class="message text-center">
+            <div class="spinner-border text-light"></div>
+        </div>
+    </div>
+    `);
+
+chatWindow.scrollTop = chatWindow.scrollHeight;
+
+    const formData=new FormData();
+    formData.append("csrfmiddlewaretoken",document.querySelector("[name=csrfmiddlewaretoken]").value);
+    formData.append("action","ask");
+    formData.append("question",input.value);
+
+    const response=await fetch("",{
+        method:"POST",
+        body:formData
+    });
+
+    const data=await response.json();
+
+    document.getElementById("loadingMessage").remove();
+
+    if(data.error){
+        alert(data.error);
+        return;
+    }
+
+    let sources="";
+
+    if(data.sources.length){
+        sources="<div class='sources'><strong>Sources</strong><ul class='mt-2 mb-0'>";
+
+        data.sources.forEach(function(source){
+            sources+=`<li>${source.document_name} ${source.page_number ? `(Page ${source.page_number}) ` : ""}(Chunk ${source.chunk_number})</li>`;
+        });
+
+        sources+="</ul></div>";
+    }
+
+    chatWindow.insertAdjacentHTML("beforeend",`
+
+        <div class="ai-message">
+            <div class="message">
+                <div class="markdown-content">
+                    ${marked.parse(data.answer)}
+                </div>
+                ${sources}
+            </div>
+        </div>
+
+    `);
+
+    hljs.highlightAll();
+    input.value = "";
+    document.getElementById("question").focus();
+    chatWindow.scrollTop=chatWindow.scrollHeight;
+
+});
+</script>
+
+{% endif %}
+
+{% endblock %}
